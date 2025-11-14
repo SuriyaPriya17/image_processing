@@ -16,26 +16,31 @@ def ordered_dithering(image, matrix):
 
 def error_diffusion_halftoning(image):
     h, w = image.shape
-    halftoned = np.zeros((h, w), dtype=np.uint8)
-    error = np.zeros((h, w), dtype=np.float32)
+    halftoned = image.astype(np.float32)  
 
-    for i in range(h):
-        for j in range(w):
-            old_pixel = image[i, j] + error[i, j]
-            new_pixel = 255 if old_pixel > 128 else 0
-            halftoned[i, j] = new_pixel
+    for y in range(h):
+        for x in range(w):
+
+            old_pixel = halftoned[y, x]
+            new_pixel = 255 if old_pixel > 127 else 0
+            halftoned[y, x] = new_pixel
+
             quant_error = old_pixel - new_pixel
 
-            if j + 1 < w:
-                error[i, j + 1] += quant_error * 7 / 16
-            if i + 1 < h:
-                if j > 0:
-                    error[i + 1, j - 1] += quant_error * 3 / 16
-                error[i + 1, j] += quant_error * 5 / 16
-                if j + 1 < w:
-                    error[i + 1, j + 1] += quant_error * 1 / 16
+            if x + 1 < w:
+                halftoned[y, x + 1] += quant_error * 7/16
 
-    return halftoned
+            if y + 1 < h and x > 0:
+                halftoned[y + 1, x - 1] += quant_error * 3/16
+
+            if y + 1 < h:
+                halftoned[y + 1, x] += quant_error * 5/16
+
+            if y + 1 < h and x + 1 < w:
+                halftoned[y + 1, x + 1] += quant_error * 1/16
+
+    return halftoned.clip(0,255).astype(np.uint8)
+
 
 image_path = 'flowers.jpg'
 image = Image.open(image_path).convert('L')
@@ -65,4 +70,5 @@ plt.axis('off')
 
 plt.tight_layout()
 plt.show()
+
 
