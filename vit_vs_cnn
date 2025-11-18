@@ -1,0 +1,136 @@
+
+# CNN vs ViT Comparison on CIFAR10
+
+import torch
+from torch import nn
+from torchvision import datasets, transforms, models
+from transformers import ViTForImageClassification
+import time
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Using device:", device)
+
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),  # Match pretrained input
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225])
+])
+
+train_dataset = datasets.CIFAR10(root='./data', train=True,
+                                 download=True, transform=transform)
+test_dataset = datasets.CIFAR10(root='./data', train=False,
+                                download=True, transform=transform)
+
+train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=32, shuffle=True)
+test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=32, shuffle=False)
+
+
+# --- CNN: Pretrained ResNet18 ---
+cnn_model = models.resnet18(pretrained=True)
+cnn_model.fc = nn.Linear(cnn_model.fc.in_features, 10)
+cnn_model = cnn_model.to(device)
+
+# --- ViT: Pretrained ViT Base ---
+vit_model = ViTForImageClassification.from_pretrained('google/vit-base-patch16-224')
+# Replace the classifier with a new linear layer for 10 classes
+vit_model.classifier = nn.Linear(vit_model.config.hidden_size, 10)
+vit_model = vit_model.to(device)
+
+def fine_tune(model, train_loader, epochs=3, lr=1e-4, model_name="Model"):
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    print(f"\nFine-tuning {model_name} for {epochs} epochs...")
+    for epoch in range(epochs):
+        model.train()
+        running_loss, correct, total = 0, 0, 0
+        start = time.time()
+
+        for images, labels in train_loader:
+            images, labels = images.to(device), labels.to(device)
+
+            optimizer.zero_grad()
+            outputs = model(images)
+            logits = outputs.logits if hasattr(outputs, 'logits') else outputs
+            loss = criterion(logits, labels)
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item() * images.size(0)
+            _, preds = torch.max(logits, 1)
+            correct += (preds == labels).sum().item()
+            total += labels.size(0)
+
+        epoch_loss = running_loss / total
+        epoch_acc = correct / total
+        print(f"Epoch [{epoch+1}/{epochs}] | "
+              f"Loss: {epoch_loss:.4f} | Acc: {epoch_acc*100:.2f}% | "
+              f"Time: {time.time()-start:.1f}s")
+
+    print(f"Finished fine-tuning {model_name}!\n")
+    return model
+
+def inference(model, dataloader):
+    model.eval()
+    correct, total = 0, 0
+    with torch.no_grad():
+        for images, labels in dataloader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            logits = outputs.logits if hasattr(outputs, 'logits') else outputs
+            _, predicted = torch.max(logits, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+    return correct / total
+
+cnn_model = fine_tune(cnn_model, train_loader, epochs=2, lr=1e-4, model_name="ResNet18")
+cnn_acc = inference(cnn_model, test_loader)
+print(f"CNN (ResNet18) Test Accuracy: {cnn_acc*100:.2f}%")
+
+vit_model = fine_tune(vit_model, train_loader, epochs=2, lr=5e-5, model_name="ViT-Base")
+vit_acc = inference(vit_model, test_loader)
+print(f"ViT Test Accuracy: {vit_acc*100:.2f}%")
+
+print("\n================= Final Comparison =================")
+print(f"ResNet18 (CNN) Test Accuracy : {cnn_acc*100:.2f}%")
+print(f"ViT-Base (Transformer) Test Accuracy : {vit_acc*100:.2f}%")
+print("=====================================================")
+
+Using device: cuda
+100%|██████████| 170M/170M [00:04<00:00, 42.4MB/s]
+/usr/local/lib/python3.12/dist-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=ResNet18_Weights.IMAGENET1K_V1`. You can also use `weights=ResNet18_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+Downloading: "https://download.pytorch.org/models/resnet18-f37072fd.pth" to /root/.cache/torch/hub/checkpoints/resnet18-f37072fd.pth
+100%|██████████| 44.7M/44.7M [00:00<00:00, 119MB/s]
+/usr/local/lib/python3.12/dist-packages/huggingface_hub/utils/_auth.py:94: UserWarning: 
+The secret `HF_TOKEN` does not exist in your Colab secrets.
+To authenticate with the Hugging Face Hub, create a token in your settings tab (https://huggingface.co/settings/tokens), set it as secret in your Google Colab and restart your session.
+You will be able to reuse this secret in all of your notebooks.
+Please note that authentication is recommended but still optional to access public models or datasets.
+  warnings.warn(
+config.json: 
+ 69.7k/? [00:00<00:00, 5.48MB/s]
+model.safetensors: 100%
+ 346M/346M [00:07<00:00, 33.1MB/s]
+
+Fine-tuning ResNet18 for 2 epochs...
+Epoch [1/2] | Loss: 0.3295 | Acc: 89.12% | Time: 214.1s
+Epoch [2/2] | Loss: 0.1263 | Acc: 95.82% | Time: 211.5s
+Finished fine-tuning ResNet18!
+
+CNN (ResNet18) Test Accuracy: 93.69%
+
+Fine-tuning ViT-Base for 2 epochs...
+Epoch [1/2] | Loss: 0.1095 | Acc: 96.90% | Time: 1625.9s
+Epoch [2/2] | Loss: 0.0295 | Acc: 99.11% | Time: 1629.1s
+Finished fine-tuning ViT-Base!
+
+ViT Test Accuracy: 97.82%
+
+================= Final Comparison =================
+ResNet18 (CNN) Test Accuracy : 93.69%
+ViT-Base (Transformer) Test Accuracy : 97.82%
+=====================================================
